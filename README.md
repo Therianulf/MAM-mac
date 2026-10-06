@@ -2,7 +2,7 @@
 
 A one-click installer for the tooling that gets Monsters and Memories running "natively" on an Apple-Silicon Mac.
 
-Created 2026-10-05 by command-control at the owner's request.
+Created 2026-10-05 by command-control at the owner's request. Verified the same day on an M4 Max running macOS 26.7.1: install, login, the 8.7 GB patch, the launcher's Play button and the game itself under D3DMetal all worked with no issues.
 
 ## The objective (the owner's words, 2026-10-05)
 

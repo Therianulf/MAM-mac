@@ -14,7 +14,7 @@ Everything goes into one folder, `MAM_HOME`, default `~/MAM-mac/` (the owner's c
 
 | Piece | Source | Size | Why |
 |---|---|---|---|
-| Official Mac launcher 0.22.13 | the launcher's own update API → `pub-…r2.dev/launcher_v2/0.22.13/mnm_patcher_app_0.22.13_aarch64.app.tar.gz` | 10 MB | the login/patch UI; left free to self-update (it is in a user-writable folder, so no admin prompt) |
+| Official Mac launcher (0.20.3 build) | the launcher page's `Monsters & Memories.app.tar.gz` — byte-identical to the update API's "0.22.13" file | 10 MB | the login/patch UI; started with `--stinky-cheese` so it does not loop on a self-update to the same build (`mam launcher --update` allows it; `mam install --launcher-latest` refetches from the API) |
 | Wine engine `WS12WineSikarugir10.0_6` | `github.com/Sikarugir-App/Engines` release | ~340 MB | x86_64 Wine with msync; the build proven on this game |
 | Sikarugir Template 1.0.18 | `github.com/Sikarugir-App/Template` release | ~80 MB | the engine's support dylibs; also carries Apple D3DMetal 3.0 |
 | DXMT 0.80 | `github.com/3Shain/dxmt` release | small | default DirectX 11 → Metal layer, MIT |
@@ -33,7 +33,7 @@ The launcher patches the game into `./mnm/` under its working directory and its 
 1. starts the launcher binary with the working directory set to `MAM_HOME/Game/` (so the game lands in `MAM_HOME/Game/mnm/`), and
 2. loads `libmamplay.dylib` into it with `DYLD_INSERT_LIBRARIES` (the launcher is ad-hoc signed without hardened runtime, so this is allowed). The dylib interposes `posix_spawn`/`posix_spawnp`; when the launcher spawns `…/mnm.exe`, it spawns `mam play --token <jwt>` instead. The launcher sees a running child and shows "Game is running" as on Windows.
 
-`mam play` is the actual launch: `wine64 mnm.exe -force-d3d11 --token <jwt>` in the prefix, with `WINEARCH=win64 WINEMSYNC=1 WINEDEBUG=-all` and the renderer's `WINEDLLOVERRIDES`. It also works on its own: run without `--token` it reads the JWT the launcher saved in `launcher.db`, so if the shim can't be used (no compiler and no prebuilt dylib, or a future hardened launcher) the user signs in and patches in the launcher, then runs `mam play`. Logs go to `MAM_HOME/Logs/`.
+`mam play` is the actual launch: `wine mnm.exe -force-d3d11 --token <jwt>` (the engine's `bin/wine` is the 64-bit loader) in the prefix, with `WINEARCH=win64 WINEMSYNC=1 WINEDEBUG=-all` and the renderer's `WINEDLLOVERRIDES`. It also works on its own: run without `--token` it reads the JWT the launcher saved in `launcher.db`, so if the shim can't be used (no compiler and no prebuilt dylib, or a future hardened launcher) the user signs in and patches in the launcher, then runs `mam play`. Logs go to `MAM_HOME/Logs/`.
 
 This is the approach MnM-on-Mac v1 took (MIT, credited in the repo); its own shim is 58 lines. We write ours.
 

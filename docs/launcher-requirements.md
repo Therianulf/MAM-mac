@@ -18,7 +18,8 @@ Researched 2026-10-05. Three kinds of evidence, kept apart:
 - **STATED** — the Mac link on that page: `https://pub-f06cad9ebbcd412bb0f4ff64f0f6a3d7.r2.dev/launcher_v2/installer/Monsters%20%26%20Memories.app.tar.gz` (9.9 MB).
 - **OBSERVED** — that tarball unpacks to `mnm_patcher_app.app`: bundle id `com.monstersandmemories.mnm-patcher-app`, executable `Contents/MacOS/mnm_launcher`, version **0.20.3**, **arm64 only** (no Intel slice), ad-hoc signed, not notarized, no hardened runtime. It is a Tauri 2.8.5 app (Rust + WebKit), author string "Niche Worlds Cult", description "A launcher and patcher for Monsters & Memories".
 - **STATED** — the launcher's own update API, `https://account.monstersandmemories.com/api/launcher/update?target=darwin-aarch64&current_version=0.0.0`, answers version **0.22.13**, published **2026-03-05**, file `launcher_v2/0.22.13/mnm_patcher_app_0.22.13_aarch64.app.tar.gz`. `target=darwin-x86_64` returns nothing. For comparison: Windows 0.24.6 (2026-10-01), Linux 0.22.14 (2026-03-06).
-- **INFERRED** — there is no Intel Mac build, and the Mac launcher is about seven months behind the Windows one.
+- **OBSERVED** — the update API's "0.22.13" tarball is byte-identical to the launcher page's tarball (same SHA-256 `3ef88c15…`); its `Info.plist` says 0.20.3 and the binary is dated 2026-01-14. One build, two labels.
+- **INFERRED** — there is no Intel Mac build, and the Mac launcher is about seven months behind the Windows one. A launcher that believes it is 0.20.3 and is offered "0.22.13" may try to self-update to the same file on every start; `--stinky-cheese` skips that check.
 
 ## 2. What the launcher does, and does not do
 

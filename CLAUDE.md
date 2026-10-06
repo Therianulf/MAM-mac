@@ -16,7 +16,7 @@ One-click installer for the tooling that runs Monsters & Memories on an Apple-Si
 ## Documents
 
 - [docs/launcher-requirements.md](docs/launcher-requirements.md) — what the Mac launcher is, does and needs, with sources.
-- [docs/plan.md](docs/plan.md) — the installer design, the owner's answers, and the fallback stage (Windows launcher under Wine) to build only if the live test fails.
+- [docs/plan.md](docs/plan.md) — the installer design, the live test results, the owner's answers, and the fallback stage (Windows launcher under Wine) to build only if the live test fails.
 
 ## Tooling
 

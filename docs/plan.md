@@ -74,6 +74,19 @@ The icon's launch script names the `MAM_HOME` it opens, and `uninstall` removes 
 
 CrossOver (commercial, not redistributable), Apple's GPTK `.dmg` (login-gated download), Homebrew, Intel Macs, the Windows launcher under Wine (MnM-on-Mac v2's path: patched Wine DLLs and an injected rendering bridge — only worth it if the Mac launcher proves unable to log in or patch).
 
+## Live tests (OBSERVED)
+
+- 2026-10-05, M4 Max, macOS 26.7.1, full Xcode: install, login, the 8.7 GB patch, the launcher's Play button and the game itself under D3DMetal all worked; `mam play` from the saved login also starts the game.
+- 2026-10-06, M2 Pro, macOS 26.7.1, Command Line Tools only: `mam install --yes` left 1.7 GB in `MAM_HOME`; the launcher patched 261 files (8.7 GB, 7 GB downloaded, about 342 s); Play through the shim and the game under D3DMetal worked.
+- Sizes of the M4 Max install, measured 2026-10-06 with `du -sh` (the README's table): `Runtime` 1.1 GB, `Prefix` 339 MB, `downloads` 270 MB, `Launcher` 19 MB, `Game` 8.7 GB, 10 GB in all.
+- Not tried yet: `--renderer dxmt`, macOS older than 26, a Mac without a C compiler (no shim), the installer fetched as a ZIP rather than by `git clone`.
+
+## Where this started
+
+Created 2026-10-05 by command-control at the owner's request. His objective, in his words:
+
+> i just read that monsters and memories has a mac launcher option now: https://account.monstersandmemories.com/launcher but it requires wine and proton. start a new repo called MAM-mac, the objective of this repo is to be the one click installer for the tooling to get Monsters and memories running "natively" on mac
+
 ## The owner's answers (2026-10-05, relayed by command-control)
 
 1. Mac launcher tried by hand: no ("i played on windows last time"). His live test is the first proof.

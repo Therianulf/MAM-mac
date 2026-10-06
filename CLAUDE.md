@@ -9,6 +9,7 @@ One-click installer for the tooling that runs Monsters & Memories on an Apple-Si
 - Test with `MAM_HOME=$PWD/.local/mam` (gitignored) and `--no-app`. Never open the launcher window or the game from an agent session; the live test is the owner's, from his own account. Never sign in to his account.
 - Every download is HTTPS and pinned by SHA-256 in `bin/mam`; nothing fetched is unpacked without a hash check. Apple's D3DMetal is installed only after the user types `yes` to its licence (`--yes` counts as that).
 - Do not edit `bin/mam` while an install is running: bash reads the script incrementally.
+- Never run `bin/mam uninstall` against a test `MAM_HOME` with the real `HOME`: it deletes the launcher's saved login, which hangs a running patch at "260 / 261 files"; see [docs/plan.md](docs/plan.md#removal).
 - Separate STATED (a source says it), OBSERVED (read from the binary) and INFERRED (our reading) in every doc.
 - Report milestones to `command-control-9c` by messenger and `command-control+claude` by letter.
 
@@ -22,5 +23,5 @@ One-click installer for the tooling that runs Monsters & Memories on an Apple-Si
 - `bin/mam` — the whole installer: `doctor`, `install`, `launcher`, `play`, `clean`, `uninstall`, `wine`, `env`, `version`; pins, layout and the Wine environment live at its top. `bin/mam help` lists options.
 - `shim/mamplay.c` — the `posix_spawn` interposer that turns the launcher's Play into `mam play`; `shim/test_host.c` stands in for the launcher in tests.
 - `tests/shim_test.sh` — builds the shim and proves the redirect without any launcher or Wine.
-- `tests/install_test.sh` — end to end in a temp `MAM_HOME`, ending in `uninstall`; `MAM_CACHE=$PWD/.local/mam/downloads` skips the 270 MB fetch.
+- `tests/install_test.sh` — end to end in a temp `MAM_HOME` and a temp `HOME`, ending in `uninstall`; `MAM_CACHE=$PWD/.local/mam/downloads` skips the 270 MB fetch.
 - `Install Monsters & Memories.command`, `Monsters & Memories.command`, `install.sh` — the double-click and terminal entry points; each is one `exec bin/mam …` line.

@@ -25,6 +25,8 @@ Researched 2026-10-05. Three kinds of evidence, kept apart:
 
 - **OBSERVED** — IPC commands behind the UI: `load_database`, `save_variable` (`remember`, `username`, `token`), `get_game_state`, `patch` (with `gamePath: "./mnm/"`, `chunksUrl`, `manifestUrl`, `validate`), `cancel_patch`, `start_game`, `is_game_running`, `fetch_rss`. Buttons: Login, Install, Update, Play, Repair, Logout. No settings screen, no folder picker, no platform branching.
 - **OBSERVED** — login: `POST https://account2.monstersandmemories.com/api/account/login` → a JWT stored as `token` in `launcher.db` (SQLite, tables `settings(variable,value)` and `game_versions(slug,version)`) in the app data directory, which for this bundle id is `~/Library/Application Support/com.monstersandmemories.mnm-patcher-app/`. Game versions and patch URLs come from `/api/game/versions?token=`.
+- **OBSERVED** (launcher.log, 2026-10-06) — after the last file is assembled it purges obsolete files, then writes `game_versions` to `launcher.db`. It does not recreate the app data directory if that directory vanished mid-session; the write panics (`unable to open database file`, SQLite 14), and the window stays on "Assembling: N-1 / N files (1 seconds remaining)".
+- **OBSERVED** (launcher.log) — it prints the SQL behind `save_variable` to stdout, the login token included, so `bin/mam launcher`'s `Logs/launcher.log` holds the token in plain text.
 - **OBSERVED** — patching writes the game to **`./mnm/`, relative to the launcher process's working directory**. The code never sets or changes that directory. Files are validated with xxh3 hashes against a manifest (`game.db` in the game folder); "Repair" re-validates and re-downloads.
 - **OBSERVED** — Play is `start_game { directory: "./mnm/", executable: "mnm.exe", token }`, implemented as `Command::new("./mnm//mnm.exe").arg("--token").arg(token).spawn()`. The child is kept so `is_game_running` can poll it.
 - **OBSERVED** — the only other things it runs: `/usr/bin/open` (for links), and its self-updater (Tauri updater 2.9.0, minisign-signed, which uses an admin-privileges AppleScript only when the bundle is not writable). `--stinky-cheese` skips the update check. `MNM_LOCAL_SERVER` is a developer switch.
@@ -74,8 +76,7 @@ Researched 2026-10-05. Three kinds of evidence, kept apart:
 
 ## 7. Still unknown (only a live test or the developers can answer)
 
-- Whether launcher 0.22.13 still logs in and patches the current game (0.30.2.4, 2026-10-04); the login call carries `version: 21` and the Windows launcher is two minor versions ahead.
-- The size of the game install.
+- Answered by the live tests (M4 Max 2026-10-05, M2 Pro 2026-10-06): launcher 0.20.3 logs in and patches the current game, and the install is 8.7 GB (261 files, 7 GB downloaded).
 - Whether the game's memory monitoring objects to Wine. No source says it does.
 - Minimum macOS the developers intend for the Mac launcher.
 

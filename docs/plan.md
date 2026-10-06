@@ -57,6 +57,8 @@ This is the approach MnM-on-Mac v1 took (MIT, credited in the repo); its own shi
 
 `mam uninstall` deletes `MAM_HOME` (runtime, prefix, launcher copy, shim, logs) and asks two separate y/N questions before deleting the game files (large) and the launcher's own data folder (holds the saved login). Rosetta 2 is an Apple component and stays. Nothing else was changed, so nothing else to undo.
 
+The icon's launch script names the `MAM_HOME` it opens, and `uninstall` removes the icon only when it names this one (an icon naming none counts as the default `~/MAM-mac`). The launcher's data folder is under `$HOME`, shared by every `MAM_HOME`, so `uninstall --yes` deletes it whatever `MAM_HOME` says. On 2026-10-06 the install test ran `uninstall --yes` with a temp `MAM_HOME` but the real `HOME` while the owner's patch was running. The launcher then crashed writing `game_versions` to the missing `launcher.db` and its window stayed on "260 / 261 files (1 seconds remaining)". Recovery: quit the launcher, reopen it, sign in again, press Install; the files on disk are kept. The test now sets its own `HOME` too.
+
 ## What the user still does by hand
 
 - Buy the subscription ($15/month) and have the account.
@@ -66,7 +68,7 @@ This is the approach MnM-on-Mac v1 took (MIT, credited in the repo); its own shi
 
 ## Testing without changing this Mac
 
-`MAM_HOME=<repo>/.local/mam` (gitignored) or a temp folder. `tests/install_test.sh` runs `mam install` end to end in a temp folder (downloads, hashes, unpack, prefix), `wine cmd /c ver` inside the prefix (console only, no window), `mam play --dry-run`, the D3DMetal path, `doctor` and `uninstall`; `tests/shim_test.sh` spawns a fake `mnm.exe` through a tiny host program with the shim inserted. The launcher window and the game are opened only by the owner, from his own account.
+`MAM_HOME=<repo>/.local/mam` (gitignored) or a temp folder. `tests/install_test.sh` runs `mam install` end to end in a temp folder with a temp `HOME` (downloads, hashes, unpack, prefix), `wine cmd /c ver` inside the prefix (console only, no window), `mam play --dry-run`, the D3DMetal path, `doctor` and `uninstall`; `tests/shim_test.sh` spawns a fake `mnm.exe` through a tiny host program with the shim inserted. The launcher window and the game are opened only by the owner, from his own account.
 
 ## Not in scope, on purpose
 

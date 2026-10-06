@@ -238,8 +238,9 @@ cmd_install() {
         note "support libraries (Sikarugir Template 1.0.18)"
         tar -xJf "$DL/Template-1.0.18.tar.xz" -C "$tmp"
         mv "$tmp"/Template-*.app/Contents/Frameworks/* "$FRAMEWORKS"/
+        # d3dmetal goes too: it comes back only through the licence step below
         rm -rf "$FRAMEWORKS/renderer/apple_gptk" "$FRAMEWORKS/renderer/cnc_ddraw" "$FRAMEWORKS/renderer/d9vk" \
-               "$FRAMEWORKS/renderer/dxvk" "$FRAMEWORKS/renderer/dxmt"
+               "$FRAMEWORKS/renderer/dxvk" "$FRAMEWORKS/renderer/dxmt" "$D3DMETAL"
         note "wine engine (Sikarugir 10.0_6, x86_64)"
         tar -xJf "$DL/WS12WineSikarugir10.0_6.tar.xz" -C "$FRAMEWORKS"
         [[ -x $ENGINE/bin/wine ]] || die "engine layout unexpected: no $ENGINE/bin/wine"
@@ -318,7 +319,7 @@ cmd_install() {
 
 make_app_link() {  # a user-level app bundle that runs 'mam launcher'; no admin, no signing
     rm -rf "$APP_LINK"; mkdir -p "$APP_LINK/Contents/MacOS" "$APP_LINK/Contents/Resources"
-    printf '#!/bin/bash\nexec "%s" launcher\n' "$MAM_BIN" > "$APP_LINK/Contents/MacOS/launch"
+    printf '#!/bin/bash\nexport MAM_HOME=%q\nexec %q launcher\n' "$MAM_HOME" "$MAM_BIN" > "$APP_LINK/Contents/MacOS/launch"
     chmod +x "$APP_LINK/Contents/MacOS/launch"
     cp "$LAUNCHER_APP/Contents/Resources/icon.icns" "$APP_LINK/Contents/Resources/icon.icns" 2>/dev/null || true
     cat > "$APP_LINK/Contents/Info.plist" <<EOF
@@ -401,13 +402,21 @@ cmd_play() {
 }
 
 # ---- uninstall --------------------------------------------------------------
+app_link_ours() {  # the icon opens this MAM_HOME; an icon naming none opens the default one
+    local l="$APP_LINK/Contents/MacOS/launch"
+    [[ -f $l ]] || return 1
+    if grep -q '^export MAM_HOME=' "$l"; then grep -qxF "export MAM_HOME=$(printf %q "$MAM_HOME")" "$l"
+    else [[ $MAM_HOME == "$HOME/MAM-mac" ]]; fi
+}
+
 cmd_uninstall() {
     while [[ $# -gt 0 ]]; do case $1 in --yes) YES=1; shift ;; *) die "unknown uninstall option $1" ;; esac; done
     [[ -d $MAM_HOME ]] || { say "nothing installed at $MAM_HOME"; return 0; }
     local gd; gd=$(game_dir)
     say "This removes the runtime, prefix, launcher copy, shim, downloads and logs under $MAM_HOME."
     ask "Remove them?" || exit 0
-    rm -rf "$RUNTIME" "$PREFIX" "$LAUNCHER_DIR" "$MAM_HOME/lib" "$DL" "$LOGS" "$MAM_HOME"/.unpack.* "$APP_LINK"
+    rm -rf "$RUNTIME" "$PREFIX" "$LAUNCHER_DIR" "$MAM_HOME/lib" "$DL" "$LOGS" "$MAM_HOME"/.unpack.*
+    if app_link_ours; then rm -rf "$APP_LINK"; fi
     if [[ -d $gd/mnm ]]; then
         if ask "Also delete the game files at $gd/mnm ($(du -sh "$gd/mnm" 2>/dev/null | cut -f1))?"; then rm -rf "$gd/mnm"; fi
     fi
@@ -430,6 +439,6 @@ case $cmd in
     wine)      wine_env; exec "$ENGINE/bin/wine" "$@" ;;
     env)       wine_env "${1:-}"; env | grep -E '^(WINE|CX_|DYLD_|MTL_|PATH=)' | sort ;;
     version)   say "mam $MAM_VERSION ($RUNTIME_ID)" ;;
-    help|-h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+    help|-h|--help) sed -n '2,/^[^#]/p' "$0" | sed -n 's/^# \{0,1\}//p' ;;
     *) die "unknown command '$cmd' (try: mam help)" ;;
 esac

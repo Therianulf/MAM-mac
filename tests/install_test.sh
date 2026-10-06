@@ -2,12 +2,14 @@
 # End-to-end test of bin/mam in a temp MAM_HOME: install (DXMT, no icon), a
 # console-only wine check, play dry-runs, the D3DMetal licence gate and path,
 # uninstall.
-# Opens no window and touches nothing outside the temp folder. Set MAM_CACHE
-# to a folder holding the four downloads to skip ~270 MB of fetching.
+# Opens no window and touches nothing outside its temp folders: HOME is a temp
+# folder too, so the real icon and the launcher's saved login are out of reach.
+# Set MAM_CACHE to a folder holding the four downloads to skip ~270 MB of fetching.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 export MAM_HOME=$(mktemp -d "${TMPDIR:-/tmp}/mam-install-test.XXXXXX")
-trap 'rm -rf "$MAM_HOME"' EXIT
+export HOME=$(mktemp -d "${TMPDIR:-/tmp}/mam-install-home.XXXXXX")
+trap 'rm -rf "$MAM_HOME" "$HOME"' EXIT
 mam="$here/bin/mam"
 step() { printf '\n== %s\n' "$*"; }
 
@@ -19,7 +21,7 @@ step "install (dxmt, no icon)"
 [[ -d $MAM_HOME/Prefix/drive_c/windows/system32 ]]
 [[ -x $MAM_HOME/Launcher/mnm_patcher_app.app/Contents/MacOS/mnm_launcher ]]
 [[ -f $MAM_HOME/Prefix/drive_c/windows/system32/winemetal.dll ]]
-[[ ! -e $HOME/Applications/Monsters\ \&\ Memories.app || -n ${MAM_ICON_PREEXISTING:-} ]] || true
+[[ ! -e $HOME/Applications/Monsters\ \&\ Memories.app ]]
 
 step "wine console check"
 "$mam" wine cmd /c ver | tr -d '\r' | grep -q 'Microsoft Windows 10'
@@ -42,8 +44,10 @@ grep -q 'GAME PORTING TOOLKIT' <<<"$out"
 grep -q 'licence not accepted' <<<"$out"
 [[ ! -e $MAM_HOME/Runtime/Frameworks/renderer/d3dmetal ]]
 
-step "d3dmetal path (licence auto-accepted by --yes; runtime and prefix kept)"
-out=$("$mam" install --yes --no-app --renderer d3dmetal)
+step "d3dmetal path (licence auto-accepted by --yes; runtime and prefix kept; icon in the temp HOME)"
+out=$("$mam" install --yes --renderer d3dmetal)
+icon="$HOME/Applications/Monsters & Memories.app"
+grep -qxF "export MAM_HOME=$(printf %q "$MAM_HOME")" "$icon/Contents/MacOS/launch"
 grep -q 'GAME PORTING TOOLKIT' <<<"$out"
 grep -E '^  - (D3DMetal|prefix kept|launcher kept)' <<<"$out"
 [[ -d $MAM_HOME/Runtime/Frameworks/renderer/d3dmetal/external/D3DMetal.framework ]]
@@ -53,7 +57,13 @@ grep -E '^  - (D3DMetal|prefix kept|launcher kept)' <<<"$out"
 step "doctor"
 SKIP_NET=1 "$mam" doctor | grep -q 'doctor: all good'
 
-step "uninstall"
+step "uninstall (removes this install's icon)"
 "$mam" uninstall --yes >/dev/null
 [[ ! -d $MAM_HOME/Runtime && ! -d $MAM_HOME/Prefix && ! -d $MAM_HOME/Launcher ]]
+[[ ! -e $icon ]]
+
+step "uninstall keeps an icon that opens another MAM_HOME"
+mkdir -p "$MAM_HOME" "$icon/Contents/MacOS"; printf '#!/bin/bash\nexport MAM_HOME=/elsewhere\n' > "$icon/Contents/MacOS/launch"
+"$mam" uninstall --yes >/dev/null
+[[ -f $icon/Contents/MacOS/launch ]]
 echo "install test: ok"

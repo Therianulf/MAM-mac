@@ -238,8 +238,9 @@ cmd_install() {
         note "support libraries (Sikarugir Template 1.0.18)"
         tar -xJf "$DL/Template-1.0.18.tar.xz" -C "$tmp"
         mv "$tmp"/Template-*.app/Contents/Frameworks/* "$FRAMEWORKS"/
+        # d3dmetal goes too: it comes back only through the licence step below
         rm -rf "$FRAMEWORKS/renderer/apple_gptk" "$FRAMEWORKS/renderer/cnc_ddraw" "$FRAMEWORKS/renderer/d9vk" \
-               "$FRAMEWORKS/renderer/dxvk" "$FRAMEWORKS/renderer/dxmt"
+               "$FRAMEWORKS/renderer/dxvk" "$FRAMEWORKS/renderer/dxmt" "$D3DMETAL"
         note "wine engine (Sikarugir 10.0_6, x86_64)"
         tar -xJf "$DL/WS12WineSikarugir10.0_6.tar.xz" -C "$FRAMEWORKS"
         [[ -x $ENGINE/bin/wine ]] || die "engine layout unexpected: no $ENGINE/bin/wine"
@@ -430,6 +431,6 @@ case $cmd in
     wine)      wine_env; exec "$ENGINE/bin/wine" "$@" ;;
     env)       wine_env "${1:-}"; env | grep -E '^(WINE|CX_|DYLD_|MTL_|PATH=)' | sort ;;
     version)   say "mam $MAM_VERSION ($RUNTIME_ID)" ;;
-    help|-h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+    help|-h|--help) sed -n '2,/^[^#]/p' "$0" | sed -n 's/^# \{0,1\}//p' ;;
     *) die "unknown command '$cmd' (try: mam help)" ;;
 esac

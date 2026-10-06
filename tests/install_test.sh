@@ -1,6 +1,7 @@
 #!/bin/bash
 # End-to-end test of bin/mam in a temp MAM_HOME: install (DXMT, no icon), a
-# console-only wine check, play dry-runs, the D3DMetal path, uninstall.
+# console-only wine check, play dry-runs, the D3DMetal licence gate and path,
+# uninstall.
 # Opens no window and touches nothing outside the temp folder. Set MAM_CACHE
 # to a folder holding the four downloads to skip ~270 MB of fetching.
 set -euo pipefail
@@ -34,8 +35,17 @@ step "expired token refused"
 bad="h.$(printf '{"exp":1000}' | base64 | tr -d '=\n').s"
 if "$mam" play --dry-run --token "$bad" 2>/dev/null; then echo "FAIL: expired token accepted"; exit 1; fi
 
+step "fresh runtime, d3dmetal, no --yes, no terminal: licence shown and refused"
+if out=$("$mam" install --no-app --reinstall --renderer d3dmetal </dev/null 2>&1); then
+    echo "FAIL: D3DMetal installed without the licence"; exit 1; fi
+grep -q 'GAME PORTING TOOLKIT' <<<"$out"
+grep -q 'licence not accepted' <<<"$out"
+[[ ! -e $MAM_HOME/Runtime/Frameworks/renderer/d3dmetal ]]
+
 step "d3dmetal path (licence auto-accepted by --yes; runtime and prefix kept)"
-"$mam" install --yes --no-app --renderer d3dmetal | grep -E '^  - (D3DMetal|prefix kept|launcher kept)'
+out=$("$mam" install --yes --no-app --renderer d3dmetal)
+grep -q 'GAME PORTING TOOLKIT' <<<"$out"
+grep -E '^  - (D3DMetal|prefix kept|launcher kept)' <<<"$out"
 [[ -d $MAM_HOME/Runtime/Frameworks/renderer/d3dmetal/external/D3DMetal.framework ]]
 "$mam" env | grep -q 'CX_ACTIVE_GRAPHICS_BACKEND=d3dmetal'
 "$mam" wine --version | grep -q 'wine-10.0'

@@ -1,0 +1,435 @@
+#!/bin/bash
+# mam — installs and runs the tooling that gets Monsters & Memories running on
+# an Apple-Silicon Mac: the official native launcher plus a self-contained
+# Wine runtime, all under one folder (MAM_HOME). See docs/plan.md.
+#
+#   mam doctor                     check this Mac, change nothing
+#   mam install [options]          download, verify, unpack, make the prefix
+#   mam launcher [--update]        open the official launcher the right way
+#   mam play [--token JWT] [--exe PATH] [--dry-run]
+#   mam clean                      drop the download cache (~280 MB)
+#   mam uninstall [--yes]
+#   mam wine <args>                run wine inside the prefix (debugging)
+#
+# Install options: --renderer d3dmetal|dxmt  --game-dir DIR  --reinstall
+#                  --reset-prefix  --launcher-latest  --no-app  --skip-checks
+#                  --yes (answers yes to everything, Apple's licence included)
+set -euo pipefail
+
+MAM_VERSION=0.1.0
+REPO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+MAM_BIN="$REPO_DIR/bin/mam"
+MAM_HOME=${MAM_HOME:-"$HOME/MAM-mac"}
+APP_LINK="$HOME/Applications/Monsters & Memories.app"
+
+# ---- pinned downloads (SHA-256 verified before anything is unpacked) -------
+LAUNCHER_URL='https://pub-f06cad9ebbcd412bb0f4ff64f0f6a3d7.r2.dev/launcher_v2/installer/Monsters%20%26%20Memories.app.tar.gz'
+LAUNCHER_SHA=3ef88c1566acccb6e3abad871017568dce3295ffcc0779e7ec2a671401b86571
+LAUNCHER_API='https://account.monstersandmemories.com/api/launcher/update?target=darwin-aarch64&current_version=0.0.0'
+ENGINE_URL='https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineSikarugir10.0_6.tar.xz'
+ENGINE_SHA=9da7ee0cbf386522f3a9906943726d9c3c125dbbd9ab120e3cde80e88d6091b2
+TEMPLATE_URL='https://github.com/Sikarugir-App/Template/releases/download/v1.0/Template-1.0.18.tar.xz'
+TEMPLATE_SHA=00d1fcb66aebdef51981b26476a2fe8cd600c39552166f0e733f57272d9e97b3
+DXMT_URL='https://github.com/3Shain/dxmt/releases/download/v0.80/dxmt-v0.80-builtin.tar.gz'
+DXMT_SHA=8f260e36b5739e68f3bad613381441385c4dc7b85b78ba8de653d5a6a264529d
+RUNTIME_ID="sikarugir-10.0_6+template-1.0.18+dxmt-0.80"
+MIN_MACOS=14.6          # Sikarugir Template 1.0.18 floor
+MIN_MACOS_D3DMETAL=15   # Apple's D3DMetal 3.0 read-me
+MIN_FREE_GB=3
+WARN_FREE_GB=20         # below this, shout about the game download before the launcher opens
+
+# ---- layout under MAM_HOME --------------------------------------------------
+DL="$MAM_HOME/downloads"
+RUNTIME="$MAM_HOME/Runtime"
+FRAMEWORKS="$RUNTIME/Frameworks"
+ENGINE="$FRAMEWORKS/wswine.bundle"
+D3DMETAL="$FRAMEWORKS/renderer/d3dmetal"
+PREFIX="$MAM_HOME/Prefix"
+LAUNCHER_DIR="$MAM_HOME/Launcher"
+LAUNCHER_APP="$LAUNCHER_DIR/mnm_patcher_app.app"
+LAUNCHER_BIN="$LAUNCHER_APP/Contents/MacOS/mnm_launcher"
+SHIM="$MAM_HOME/lib/libmamplay.dylib"
+LOGS="$MAM_HOME/Logs"
+CONFIG="$MAM_HOME/config"
+LAUNCHER_DATA="$HOME/Library/Application Support/com.monstersandmemories.mnm-patcher-app"
+LAUNCHER_DB="$LAUNCHER_DATA/launcher.db"
+
+say()  { printf '%s\n' "$*"; }
+note() { printf '  - %s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+YES=0
+ask() {  # ask "question" -> 0 for yes
+    if [[ $YES == 1 ]]; then say "$1 [auto-yes]"; return 0; fi
+    if [[ ! -t 0 ]]; then say "$1 [no terminal: answered no; pass --yes to allow]"; return 1; fi
+    local a; read -r -p "$1 [y/N] " a; [[ $a == y || $a == Y || $a == yes ]]
+}
+
+config_get() { [[ -f $CONFIG ]] && sed -n "s/^$1=//p" "$CONFIG" | tail -1 || true; }
+config_set() {
+    mkdir -p "$MAM_HOME"; touch "$CONFIG"
+    { grep -v "^$1=" "$CONFIG" || true; printf '%s=%s\n' "$1" "$2"; } > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
+}
+game_dir()  { local g; g=$(config_get game_dir); printf '%s' "${g:-$MAM_HOME/Game}"; }
+renderer()  { local r; r=$(config_get renderer); printf '%s' "${r:-d3dmetal}"; }
+free_gb()   { mkdir -p "$MAM_HOME" 2>/dev/null; df -g "$MAM_HOME" 2>/dev/null | awk 'NR==2{print $4}'; }
+space_warning() {
+    local free; free=$(free_gb)
+    [[ -n $free && $free -lt $WARN_FREE_GB ]] || return 0
+    say "!!! Only ${free} GB free on the volume holding $MAM_HOME."
+    say "!!! The game download is large and its size is unknown until the launcher's first Install."
+    say "!!! Free space first: empty the Trash, clear ~/Downloads; 'bin/mam clean' drops this installer's download cache."
+}
+
+ver_ge() {  # ver_ge 26.7.1 14.6 -> 0 when first >= second
+    [[ $(printf '%s\n%s\n' "$2" "$1" | sort -t. -k1,1n -k2,2n -k3,3n | head -1) == "$2" ]]
+}
+
+# ---- doctor -----------------------------------------------------------------
+DOCTOR_FAIL=0
+fail() { printf '  x %s\n' "$*"; DOCTOR_FAIL=1; }
+ok()   { printf '  v %s\n' "$*"; }
+
+cmd_doctor() {
+    say "MAM-mac $MAM_VERSION doctor (changes nothing)"
+    say "MAM_HOME: $MAM_HOME"
+    local arch mac free
+    arch=$(uname -m)
+    if [[ $arch == arm64 ]]; then ok "Apple Silicon ($(sysctl -n machdep.cpu.brand_string))"
+    else fail "this Mac is $arch; the official launcher only exists for Apple Silicon"; fi
+    mac=$(sw_vers -productVersion)
+    if ver_ge "$mac" "$MIN_MACOS"; then ok "macOS $mac (need $MIN_MACOS+; D3DMetal needs $MIN_MACOS_D3DMETAL+)"
+    else fail "macOS $mac is older than $MIN_MACOS"; fi
+    if arch -x86_64 /usr/bin/true 2>/dev/null; then ok "Rosetta 2 present"
+    else fail "Rosetta 2 missing (install offers to add it: Apple's softwareupdate --install-rosetta)"; fi
+    free=$(free_gb)
+    if [[ -n ${free:-} && $free -ge $MIN_FREE_GB ]]; then ok "${free} GB free (tooling needs ~$MIN_FREE_GB GB; the game itself comes on top)"
+    else fail "only ${free:-?} GB free; need $MIN_FREE_GB GB for the tooling, plus the game"; fi
+    local t; for t in curl tar shasum sqlite3 plutil textutil; do
+        command -v "$t" >/dev/null || fail "missing $t (part of macOS)"; done
+    if command -v cc >/dev/null && cc --version >/dev/null 2>&1; then ok "cc present: the Play shim can be built"
+    else note "no C compiler (Xcode command line tools): Play goes through 'mam play' unless a prebuilt shim is shipped"; fi
+    if [[ ${SKIP_NET:-0} == 0 ]]; then
+        local h; for h in "$ENGINE_URL" "$LAUNCHER_API" "$LAUNCHER_URL"; do
+            if curl -fsSIL --max-time 15 -o /dev/null "$h" 2>/dev/null; then ok "reachable: ${h%%/releases*}"
+            else fail "cannot reach $h"; fi
+        done
+    fi
+    say "Already here (reported only, never used or touched):"
+    local a; for a in /Applications/CrossOver.app /Applications/Whisky.app /Applications/Kegworks.app /Applications/Sikarugir.app \
+        "/Applications/Monsters & Memories.app" /Applications/mnm_patcher_app.app "$HOME/Applications/mnm_patcher_app.app" \
+        /opt/homebrew/bin/wine /usr/local/bin/wine "$HOME/Library/Application Support/MnM on Mac"; do
+        [[ -e $a ]] && note "$a"; done
+    if [[ -f $LAUNCHER_DB ]]; then
+        local u; u=$(sqlite3 "$LAUNCHER_DB" "select value from settings where variable='username'" 2>/dev/null || true)
+        note "launcher data: $LAUNCHER_DB${u:+ (signed in as $u)}"
+    else note "no launcher data yet (nobody has signed in on this Mac)"; fi
+    say "Installed by MAM-mac:"
+    [[ -f $RUNTIME/.installed ]] && note "runtime $(cat "$RUNTIME/.installed")" || note "runtime: not installed"
+    [[ -d $PREFIX/drive_c ]] && note "prefix: $PREFIX" || note "prefix: none"
+    [[ -x $LAUNCHER_BIN ]] && note "launcher: $LAUNCHER_APP ($(plutil -extract CFBundleShortVersionString raw "$LAUNCHER_APP/Contents/Info.plist" 2>/dev/null))" || note "launcher: not installed"
+    [[ -f $SHIM ]] && note "play shim: $SHIM" || note "play shim: none"
+    [[ -d $APP_LINK ]] && note "icon: $APP_LINK" || note "icon: none"
+    note "renderer: $(renderer); game folder: $(game_dir)"
+    [[ -d $(game_dir)/mnm ]] && note "game files: $(du -sh "$(game_dir)/mnm" 2>/dev/null | cut -f1) in $(game_dir)/mnm"
+    [[ $DOCTOR_FAIL == 0 ]] && say "doctor: all good" || { say "doctor: problems found"; return 1; }
+}
+
+# ---- downloads --------------------------------------------------------------
+fetch() {  # fetch URL SHA FILE
+    local url=$1 sha=$2 file=$3
+    mkdir -p "$DL"
+    if [[ -f $file ]] && [[ $(shasum -a 256 "$file" | cut -d' ' -f1) == "$sha" ]]; then
+        note "cached and verified: $(basename "$file")"; return 0; fi
+    note "downloading $(basename "$file")"
+    curl -fL --progress-bar --retry 3 -o "$file.part" "$url"
+    local got; got=$(shasum -a 256 "$file.part" | cut -d' ' -f1)
+    [[ $got == "$sha" ]] || { rm -f "$file.part"; die "checksum mismatch for $url (got $got)"; }
+    mv "$file.part" "$file"
+}
+
+# ---- wine environment -------------------------------------------------------
+wine_env() {  # exports the environment for wine in the prefix; renderer from arg or config
+    local r=${1:-$(renderer)}
+    unset DYLD_INSERT_LIBRARIES
+    export WINEPREFIX="$PREFIX" WINEARCH=win64 WINEMSYNC=1
+    export WINEDEBUG=${MAM_WINEDEBUG:--all}
+    export PATH="$ENGINE/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    export DYLD_FALLBACK_LIBRARY_PATH="$FRAMEWORKS:$ENGINE/lib:$ENGINE/lib/wine/x86_64-unix:/usr/lib"
+    unset WINEDLLPATH_PREPEND CX_ACTIVE_GRAPHICS_BACKEND WINED3DMETAL CX_D3DMETALPATH \
+          CX_APPLEGPTK_LIBD3DSHARED_PATH CX_APPLEGPT_LIBD3DSHARED_PATH
+    case $r in
+        dxmt)
+            export WINEDLLOVERRIDES="mscoree,mshtml=d;dxgi,d3d11,d3d10core=b" ;;
+        d3dmetal)
+            [[ -d $D3DMETAL/external ]] || die "D3DMetal is not installed; run: mam install --renderer d3dmetal"
+            export WINEDLLOVERRIDES="mscoree,mshtml=d;dxgi,d3d11=n,b"
+            export WINEDLLPATH_PREPEND="$D3DMETAL/wine"
+            export CX_ACTIVE_GRAPHICS_BACKEND=d3dmetal WINED3DMETAL=1
+            export CX_D3DMETALPATH="$D3DMETAL/external"
+            export CX_APPLEGPTK_LIBD3DSHARED_PATH="$D3DMETAL/external/libd3dshared.dylib"
+            export CX_APPLEGPT_LIBD3DSHARED_PATH="$D3DMETAL/external/libd3dshared.dylib"
+            export DYLD_FALLBACK_LIBRARY_PATH="$D3DMETAL/external:$DYLD_FALLBACK_LIBRARY_PATH" ;;
+        *) die "unknown renderer '$r' (dxmt or d3dmetal)" ;;
+    esac
+    [[ ${MAM_HUD:-0} == 1 ]] && export MTL_HUD_ENABLED=1
+    return 0
+}
+
+# ---- install ----------------------------------------------------------------
+cmd_install() {
+    local renderer_opt="" game_dir_opt="" reinstall=0 reset_prefix=0 launcher_latest=0 skip_checks=0 no_app=0
+    while [[ $# -gt 0 ]]; do case $1 in
+        --renderer) renderer_opt=$2; shift 2 ;;
+        --game-dir) game_dir_opt=$2; shift 2 ;;
+        --reinstall) reinstall=1; shift ;;
+        --reset-prefix) reset_prefix=1; shift ;;
+        --launcher-latest) launcher_latest=1; shift ;;
+        --no-app) no_app=1; shift ;;
+        --yes) YES=1; shift ;;
+        --skip-checks) skip_checks=1; shift ;;
+        *) die "unknown install option $1" ;;
+    esac; done
+    [[ -z $renderer_opt || $renderer_opt == dxmt || $renderer_opt == d3dmetal ]] || die "--renderer takes dxmt or d3dmetal"
+
+    mkdir -p "$MAM_HOME" "$LOGS"
+    exec > >(tee -a "$LOGS/install.log") 2>&1
+    say "MAM-mac $MAM_VERSION install — $(date '+%Y-%m-%d %H:%M')"
+    say "Everything goes under: $MAM_HOME"
+    say "Nothing is installed anywhere else (Rosetta 2 excepted, only if missing, only after you say yes)."
+
+    say "[1/6] checks"
+    if [[ $skip_checks == 0 ]]; then
+        if ! cmd_doctor; then
+            if arch -x86_64 /usr/bin/true 2>/dev/null; then die "fix the problems above, then run install again"; fi
+            # the only failure install can fix itself is Rosetta
+            [[ $(uname -m) == arm64 ]] || exit 1
+            ask "Rosetta 2 is missing. Install it now with Apple's 'softwareupdate --install-rosetta --agree-to-license'? (system component, stays after uninstall)" \
+                || die "Rosetta 2 is required for the x86_64 Wine runtime"
+            /usr/sbin/softwareupdate --install-rosetta --agree-to-license
+            arch -x86_64 /usr/bin/true || die "Rosetta 2 still not working"
+            cmd_doctor || die "fix the remaining problems above, then run install again"
+        fi
+    fi
+    local r=${renderer_opt:-$(renderer)}
+    if [[ $r == d3dmetal ]] && ! ver_ge "$(sw_vers -productVersion)" "$MIN_MACOS_D3DMETAL"; then
+        die "D3DMetal needs macOS $MIN_MACOS_D3DMETAL or newer; use --renderer dxmt"; fi
+
+    say "[2/6] downloads (each verified by SHA-256)"
+    fetch "$ENGINE_URL"   "$ENGINE_SHA"   "$DL/WS12WineSikarugir10.0_6.tar.xz"
+    fetch "$TEMPLATE_URL" "$TEMPLATE_SHA" "$DL/Template-1.0.18.tar.xz"
+    fetch "$DXMT_URL"     "$DXMT_SHA"     "$DL/dxmt-v0.80-builtin.tar.gz"
+    local launcher_tgz="$DL/launcher.app.tar.gz"
+    if [[ $launcher_latest == 1 ]]; then
+        local url; url=$(curl -fsSL --max-time 20 "$LAUNCHER_API" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')
+        [[ -n $url ]] || die "the launcher update API gave no url"
+        note "fetching the launcher the update API names (HTTPS, hash recorded after download): $url"
+        curl -fL --progress-bar -o "$launcher_tgz.part" "$url" && mv "$launcher_tgz.part" "$launcher_tgz"
+        note "sha256 $(shasum -a 256 "$launcher_tgz" | cut -d' ' -f1)"
+    else
+        fetch "$LAUNCHER_URL" "$LAUNCHER_SHA" "$launcher_tgz"
+    fi
+
+    say "[3/6] runtime"
+    if [[ $reinstall == 1 || ! -f $RUNTIME/.installed || $(cat "$RUNTIME/.installed") != "$RUNTIME_ID" ]]; then
+        rm -rf "$RUNTIME"; mkdir -p "$FRAMEWORKS"
+        local tmp; tmp=$(mktemp -d "$MAM_HOME/.unpack.XXXXXX")
+        note "support libraries (Sikarugir Template 1.0.18)"
+        tar -xJf "$DL/Template-1.0.18.tar.xz" -C "$tmp"
+        mv "$tmp"/Template-*.app/Contents/Frameworks/* "$FRAMEWORKS"/
+        rm -rf "$FRAMEWORKS/renderer/apple_gptk" "$FRAMEWORKS/renderer/cnc_ddraw" "$FRAMEWORKS/renderer/d9vk" \
+               "$FRAMEWORKS/renderer/dxvk" "$FRAMEWORKS/renderer/dxmt"
+        note "wine engine (Sikarugir 10.0_6, x86_64)"
+        tar -xJf "$DL/WS12WineSikarugir10.0_6.tar.xz" -C "$FRAMEWORKS"
+        [[ -x $ENGINE/bin/wine ]] || die "engine layout unexpected: no $ENGINE/bin/wine"
+        note "DXMT 0.80 over the engine's d3d11/dxgi"
+        tar -xzf "$DL/dxmt-v0.80-builtin.tar.gz" -C "$tmp"
+        cp "$tmp"/v0.80/x86_64-unix/winemetal.so "$ENGINE/lib/wine/x86_64-unix/"
+        local f; for f in d3d11.dll dxgi.dll winemetal.dll; do cp "$tmp/v0.80/x86_64-windows/$f" "$ENGINE/lib/wine/x86_64-windows/"; done
+        rm -rf "$tmp"
+        printf '%s\n' "$RUNTIME_ID" > "$RUNTIME/.installed"
+    else note "runtime $RUNTIME_ID already installed"; fi
+    if [[ $r == d3dmetal ]]; then
+        if [[ -d $D3DMETAL/external ]]; then note "D3DMetal already installed"
+        else
+            say "D3DMetal is Apple's Game Porting Toolkit graphics layer. Apple's licence follows; it must be accepted to install it."
+            local tmp2; tmp2=$(mktemp -d "$MAM_HOME/.unpack.XXXXXX")
+            tar -xJf "$DL/Template-1.0.18.tar.xz" -C "$tmp2" --include '*/Frameworks/renderer/d3dmetal/*'
+            local src; src=$(find "$tmp2" -type d -path '*/renderer/d3dmetal' | head -1)
+            [[ -n $src ]] || die "D3DMetal not found inside the Template tarball"
+            textutil -convert txt -stdout "$src/License.rtf"
+            if [[ $YES == 1 ]] || { [[ -t 0 ]] && read -r -p "Type yes to accept Apple's licence and install D3DMetal: " a && [[ $a == yes ]]; }; then
+                mkdir -p "$FRAMEWORKS/renderer"; mv "$src" "$D3DMETAL"; note "D3DMetal 3.0 installed"
+            else rm -rf "$tmp2"; die "licence not accepted; run again with --renderer dxmt"; fi
+            rm -rf "$tmp2"
+        fi
+    else rm -rf "$D3DMETAL"; fi
+    config_set renderer "$r"
+
+    say "[4/6] wine prefix"
+    if [[ $reset_prefix == 1 ]]; then rm -rf "$PREFIX"; fi
+    if [[ ! -d $PREFIX/drive_c ]]; then
+        ( wine_env "$r"
+          export WINEDLLOVERRIDES="mscoree,mshtml=d"   # no Mono/Gecko installers
+          note "$("$ENGINE/bin/wine" --version)"
+          "$ENGINE/bin/wine" wineboot --init >"$LOGS/wineboot.log" 2>&1
+          "$ENGINE/bin/wineserver" -w
+          "$ENGINE/bin/wine" reg add 'HKCU\Software\Wine' /v Version /d win10 /f >>"$LOGS/wineboot.log" 2>&1
+          "$ENGINE/bin/wineserver" -w )
+        [[ -d $PREFIX/drive_c/windows/system32 ]] || die "prefix creation failed; see $LOGS/wineboot.log"
+        note "prefix created at $PREFIX"
+    else note "prefix kept: $PREFIX"; fi
+    cp "$ENGINE/lib/wine/x86_64-windows/winemetal.dll" "$PREFIX/drive_c/windows/system32/"
+
+    say "[5/6] official launcher"
+    if [[ $reinstall == 1 || $launcher_latest == 1 || ! -x $LAUNCHER_BIN ]]; then
+        rm -rf "$LAUNCHER_DIR"; mkdir -p "$LAUNCHER_DIR"
+        tar -xzf "$launcher_tgz" -C "$LAUNCHER_DIR"
+        [[ -x $LAUNCHER_BIN ]] || die "launcher layout unexpected: no $LAUNCHER_BIN"
+        xattr -dr com.apple.quarantine "$LAUNCHER_APP" 2>/dev/null || true
+        note "launcher $(plutil -extract CFBundleShortVersionString raw "$LAUNCHER_APP/Contents/Info.plist") at $LAUNCHER_APP"
+    else note "launcher kept: $LAUNCHER_APP"; fi
+
+    say "[6/6] play shim and game folder"
+    mkdir -p "$MAM_HOME/lib"
+    if command -v cc >/dev/null && cc -arch arm64 -dynamiclib -O2 -o "$SHIM" "$REPO_DIR/shim/mamplay.c" 2>"$LOGS/shim-build.log"; then
+        note "built $SHIM"
+    elif [[ -f $REPO_DIR/shim/libmamplay.dylib ]]; then
+        cp "$REPO_DIR/shim/libmamplay.dylib" "$SHIM"; note "using the prebuilt shim"
+    else
+        rm -f "$SHIM"; warn "no shim: the launcher's Play button cannot start the game; use 'mam play' after patching"
+    fi
+    if [[ -n $game_dir_opt ]]; then
+        [[ -f $game_dir_opt/mnm/mnm.exe ]] || warn "$game_dir_opt has no mnm/mnm.exe yet; the launcher will install there"
+        config_set game_dir "$game_dir_opt"
+    fi
+    mkdir -p "$(game_dir)"
+    note "game folder: $(game_dir) (the launcher writes the game to $(game_dir)/mnm/)"
+    if [[ $no_app == 0 ]]; then make_app_link; note "icon: $APP_LINK"; fi
+
+    say
+    say "Done. Next:"
+    say "  1. Open 'Monsters & Memories' in ~/Applications, or double-click 'Monsters & Memories.command'."
+    say "  2. In the launcher: log in, press Install (first time) or Update, then Play."
+    say "  Logs: $LOGS   Remove everything: bin/mam uninstall"
+    space_warning
+}
+
+make_app_link() {  # a user-level app bundle that runs 'mam launcher'; no admin, no signing
+    rm -rf "$APP_LINK"; mkdir -p "$APP_LINK/Contents/MacOS" "$APP_LINK/Contents/Resources"
+    printf '#!/bin/bash\nexec "%s" launcher\n' "$MAM_BIN" > "$APP_LINK/Contents/MacOS/launch"
+    chmod +x "$APP_LINK/Contents/MacOS/launch"
+    cp "$LAUNCHER_APP/Contents/Resources/icon.icns" "$APP_LINK/Contents/Resources/icon.icns" 2>/dev/null || true
+    cat > "$APP_LINK/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>Monsters &amp; Memories</string>
+  <key>CFBundleDisplayName</key><string>Monsters &amp; Memories</string>
+  <key>CFBundleExecutable</key><string>launch</string>
+  <key>CFBundleIdentifier</key><string>io.github.therianulf.mam-mac</string>
+  <key>CFBundleIconFile</key><string>icon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$MAM_VERSION</string>
+  <key>LSMinimumSystemVersion</key><string>$MIN_MACOS</string>
+</dict></plist>
+EOF
+}
+
+# ---- launcher ---------------------------------------------------------------
+cmd_launcher() {
+    local update=0
+    while [[ $# -gt 0 ]]; do case $1 in
+        --update) update=1; shift ;;
+        *) die "unknown launcher option $1" ;;
+    esac; done
+    [[ -x $LAUNCHER_BIN ]] || die "launcher not installed; run: bin/mam install"
+    [[ -f $RUNTIME/.installed ]] || die "runtime not installed; run: bin/mam install"
+    local gd; gd=$(game_dir); mkdir -p "$gd" "$LOGS"
+    export MAM_BIN MAM_HOME
+    if [[ -f $SHIM ]]; then export DYLD_INSERT_LIBRARIES="$SHIM"
+    else warn "no play shim: the Play button will fail; use 'bin/mam play' after patching"; fi
+    local args=(); [[ $update == 1 ]] || args+=(--stinky-cheese)   # skip the self-update check
+    say "Opening the official launcher (game folder: $gd). Log in, Install/Update, Play."
+    say "Launcher output goes to $LOGS/launcher.log"
+    space_warning
+    cd "$gd"
+    exec "$LAUNCHER_BIN" ${args[@]+"${args[@]}"} >>"$LOGS/launcher.log" 2>&1
+}
+
+# ---- play -------------------------------------------------------------------
+jwt_exp() {  # prints the exp claim of a JWT, or nothing
+    local payload=$(printf '%s' "$1" | cut -d. -f2 | tr '_-' '/+')
+    while (( ${#payload} % 4 )); do payload+='='; done
+    printf '%s' "$payload" | base64 -D 2>/dev/null | sed -n 's/.*"exp":\([0-9]*\).*/\1/p'
+}
+
+cmd_play() {
+    local exe="" token="" dry=0 r=""
+    while [[ $# -gt 0 ]]; do case $1 in
+        --exe) exe=$2; shift 2 ;;
+        --token) token=$2; shift 2 ;;
+        --renderer) r=$2; shift 2 ;;
+        --dry-run) dry=1; shift ;;
+        *) die "unknown play option $1" ;;
+    esac; done
+    [[ -f $RUNTIME/.installed ]] || die "runtime not installed; run: bin/mam install"
+    [[ -d $PREFIX/drive_c ]] || die "no prefix; run: bin/mam install"
+    [[ -n $exe ]] || exe="$(game_dir)/mnm/mnm.exe"
+    [[ -f $exe ]] || die "game not found at $exe — open the launcher and press Install first"
+    if [[ -z $token ]]; then
+        [[ -f $LAUNCHER_DB ]] || die "no launcher login found at $LAUNCHER_DB — open the launcher and log in first"
+        token=$(sqlite3 "$LAUNCHER_DB" "select value from settings where variable='token'")
+        [[ -n $token ]] || die "the launcher has no saved token — log in (with Remember) first"
+    fi
+    local exp; exp=$(jwt_exp "$token")
+    if [[ -n $exp ]] && (( exp < $(date +%s) + 60 )); then
+        die "the saved login has expired — open the launcher and log in again"; fi
+    mkdir -p "$LOGS"
+    wine_env "$r"
+    local dir; dir=$(cd "$(dirname "$exe")" && pwd)
+    if [[ $dry == 1 ]]; then
+        say "cd $dir"
+        env | grep -E '^(WINE|CX_|DYLD_|MTL_|PATH=)' | sort | sed 's/^/export /'
+        say "exec $ENGINE/bin/wine $(basename "$exe") -force-d3d11 --token <jwt ${#token} chars>"
+        return 0
+    fi
+    cd "$dir"
+    say "Starting the game with wine ($(renderer)); log: $LOGS/game.log"
+    exec "$ENGINE/bin/wine" "$(basename "$exe")" -force-d3d11 --token "$token" >>"$LOGS/game.log" 2>&1
+}
+
+# ---- uninstall --------------------------------------------------------------
+cmd_uninstall() {
+    while [[ $# -gt 0 ]]; do case $1 in --yes) YES=1; shift ;; *) die "unknown uninstall option $1" ;; esac; done
+    [[ -d $MAM_HOME ]] || { say "nothing installed at $MAM_HOME"; return 0; }
+    local gd; gd=$(game_dir)
+    say "This removes the runtime, prefix, launcher copy, shim, downloads and logs under $MAM_HOME."
+    ask "Remove them?" || exit 0
+    rm -rf "$RUNTIME" "$PREFIX" "$LAUNCHER_DIR" "$MAM_HOME/lib" "$DL" "$LOGS" "$MAM_HOME"/.unpack.* "$APP_LINK"
+    if [[ -d $gd/mnm ]]; then
+        if ask "Also delete the game files at $gd/mnm ($(du -sh "$gd/mnm" 2>/dev/null | cut -f1))?"; then rm -rf "$gd/mnm"; fi
+    fi
+    if [[ -d $LAUNCHER_DATA ]]; then
+        if ask "Also delete the launcher's own data (saved login) at $LAUNCHER_DATA?"; then rm -rf "$LAUNCHER_DATA"; fi
+    fi
+    rm -f "$CONFIG"; rmdir "$gd" "$MAM_HOME" 2>/dev/null || true
+    say "Removed. Rosetta 2 (an Apple component) stays."
+}
+
+# ---- main -------------------------------------------------------------------
+cmd=${1:-help}; shift || true
+case $cmd in
+    doctor)    SKIP_NET=${SKIP_NET:-0} cmd_doctor "$@" ;;
+    install)   cmd_install "$@" ;;
+    launcher)  cmd_launcher "$@" ;;
+    play)      cmd_play "$@" ;;
+    uninstall) cmd_uninstall "$@" ;;
+    clean)     rm -rf "$DL"; say "download cache removed ($DL)" ;;
+    wine)      wine_env; exec "$ENGINE/bin/wine" "$@" ;;
+    env)       wine_env "${1:-}"; env | grep -E '^(WINE|CX_|DYLD_|MTL_|PATH=)' | sort ;;
+    version)   say "mam $MAM_VERSION ($RUNTIME_ID)" ;;
+    help|-h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) die "unknown command '$cmd' (try: mam help)" ;;
+esac

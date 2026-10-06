@@ -10,7 +10,7 @@ When it finishes there is a second double-clickable, **`Monsters & Memories.comm
 
 ## What it installs, and from where
 
-Everything goes into one folder, `MAM_HOME`, default `~/Library/Application Support/MAM-mac/` (overridable with the `MAM_HOME` variable, which is how it is tested). Every download is an HTTPS fetch pinned by SHA-256; nothing is run from the network.
+Everything goes into one folder, `MAM_HOME`, default `~/MAM-mac/` (the owner's choice; overridable with the `MAM_HOME` variable, which is how it is tested). Every download is an HTTPS fetch pinned by SHA-256; nothing is run from the network.
 
 | Piece | Source | Size | Why |
 |---|---|---|---|
@@ -22,7 +22,7 @@ Everything goes into one folder, `MAM_HOME`, default `~/Library/Application Supp
 | `libmamplay.dylib` | ~60 lines of C in this repo, built with `cc` when Xcode's tools exist, else the prebuilt copy from the release | tiny | turns the launcher's Play button into a Wine launch (see below) |
 | `bin/mam` | this repo | — | the command behind both `.command` files: `install`, `doctor`, `launcher`, `play`, `uninstall` |
 
-Apple's D3DMetal (faster on some games, licence-restricted) is **not** installed by default. `mam install --renderer d3dmetal` prints Apple's licence and installs it only after a typed `yes`.
+Apple's D3DMetal is the default renderer (the owner's choice). It is licence-restricted, so `mam install` prints Apple's licence and installs it only after a typed `yes`; it also needs macOS 15 or newer. `--renderer dxmt` (MIT, no prompt) is the alternative. Install also drops a user-level **`~/Applications/Monsters & Memories.app`** (a two-line wrapper around `mam launcher`, no admin) so the game has an icon.
 
 The only thing that can touch the system outside `MAM_HOME` is Rosetta 2, and only on a Mac that lacks it, and only after a y/N: it runs Apple's own `softwareupdate --install-rosetta --agree-to-license`. No Homebrew, no `sudo`, nothing in `/Applications` or `/usr/local`.
 
@@ -42,7 +42,7 @@ This is the approach MnM-on-Mac v1 took (MIT, credited in the repo); its own shi
 - Apple Silicon: refuses on Intel — there is no Intel launcher build.
 - macOS 14.6 or newer (the engine's stated floor).
 - Rosetta 2 (`arch -x86_64 /usr/bin/true`); offers to install it if missing.
-- Free disk: at least 3 GB for the tooling, and a loud note that the game itself comes on top (size unknown until the owner's first patch).
+- Free disk: at least 3 GB for the tooling, and a loud warning (repeated by `mam launcher`) that the game itself comes on top, with its size unknown until the launcher's first Install, and what to clear: `mam clean` drops the ~280 MB download cache; the rest is the user's Downloads and Trash.
 - Reachability of `github.com`, `account.monstersandmemories.com` and the `r2.dev` host.
 - The macOS tools it uses: `curl`, `tar`, `shasum`, `sqlite3`, `cc` (optional).
 - Already-present tooling (CrossOver, Whisky, Homebrew Wine, GPTK, a launcher in `/Applications`): reported, never used, never touched.
@@ -72,13 +72,19 @@ This is the approach MnM-on-Mac v1 took (MIT, credited in the repo); its own shi
 
 CrossOver (commercial, not redistributable), Apple's GPTK `.dmg` (login-gated download), Homebrew, Intel Macs, the Windows launcher under Wine (MnM-on-Mac v2's path: patched Wine DLLs and an injected rendering bridge — only worth it if the Mac launcher proves unable to log in or patch).
 
-## Questions only the owner can answer
+## The owner's answers (2026-10-05, relayed by command-control)
 
-1. Have you already opened the Mac launcher by hand, and did it sign in and patch the game? (0.22.13 is seven months behind the Windows launcher; only a live login tells us it still works.)
-2. Default renderer: DXMT (open source, no licence prompt) or Apple D3DMetal (licence prompt, often faster)?
-3. Install home: hidden-but-standard `~/Library/Application Support/MAM-mac`, or a visible `~/MAM-mac`?
-4. Apple Silicon only is a hard limit of the official launcher — acceptable, or should the README say so and stop there?
-5. On a Mac without Rosetta 2, may the installer run Apple's Rosetta install after a y/N? (Yours already has it.)
-6. Roughly how big is the game folder on your Windows PC? (Sets the disk check; your Mac has about 15 GB free.)
-7. Is the double-clickable `.command` file enough, or do you also want a "Monsters & Memories" icon placed in `~/Applications` (user-level, no admin)?
-8. If the Mac launcher turns out unable to log in or patch today, should MAM-mac take on the Windows-launcher-under-Wine path, or point users at MnM-on-Mac (MIT) for that case?
+1. Mac launcher tried by hand: no ("i played on windows last time"). His live test is the first proof.
+2. Default renderer: **Apple D3DMetal** ("apple d3dmetal sounds way better"); licence shown and a typed `yes` required on install. DXMT stays as `--renderer dxmt`.
+3. Install home: the visible **`~/MAM-mac`**.
+4. Apple Silicon only: accepted; the installer refuses on Intel and the README says why.
+5. Rosetta 2: the installer may run Apple's install after a y/N.
+6. Game size: unknown to him. The installer warns loudly (below 20 GB free) before the launcher's first Install and says what to clear. The "15 GB free" in the question was a misread; `df -g` shows about 298 GB free on his data volume.
+7. Entry point: the `.command` files plus a user-level **"Monsters & Memories" icon in `~/Applications`**, no admin prompt.
+8. If the Mac launcher cannot sign in or patch: MAM-mac takes on the Windows-launcher-under-Wine path itself — planned below, built only if the live test fails.
+
+No version, tag or release step without him.
+
+## Fallback stage: the Windows launcher under Wine (only if the live test fails)
+
+What it takes, as MnM-on-Mac v2 (MIT) does it, all reusable: a second, launcher-only prefix; the official NSIS `Monsters & Memories setup.exe` run silently inside it, and the Microsoft WebView2 runtime (`/silent /install`) that the Windows launcher needs; two patched Wine DLLs (`user32` with the Wine 11 stubs `IsWindowArranged`/`GetPointerPenInfo` that WebView2 imports, `ole32` with a `RevokeDragDrop` guard — LGPL); a small Windows helper that starts `mnm_launcher.exe --stinky-cheese` suspended and injects a bridge DLL that copies WebView2's software rendering into the Tauri window every 33 ms (the Mac driver cannot attach a cross-process child view) and hooks `CreateProcessW` so Play hands off to Wine; registry policy `AdditionalBrowserArguments=--disable-gpu …`, Retina and DPI keys. In MAM-mac terms: a `mam launcher-win` command, the helper/DLL binaries and their C sources ported from MnM-on-Mac's `LauncherCompatibility/`, and the `WindowsPatcherInstaller` recipe in bash. Heavier and pinned to the Wine build; worth it only once the native launcher is shown not to work.

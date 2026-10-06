@@ -66,7 +66,7 @@ This is the approach MnM-on-Mac v1 took (MIT, credited in the repo); its own shi
 
 ## Testing without changing this Mac
 
-`MAM_HOME=<repo>/.local/mam` (gitignored) or a temp folder. `mam install` end to end (downloads, hashes, unpack, prefix); `wine64 --version` and `wine64 cmd /c ver` inside the prefix (console only, no window); `mam play --dry-run` printing the exact command; a shim test that spawns a fake `mnm.exe` through a tiny host program. The launcher window and the game are opened only by the owner, from his own account.
+`MAM_HOME=<repo>/.local/mam` (gitignored) or a temp folder. `tests/install_test.sh` runs `mam install` end to end in a temp folder (downloads, hashes, unpack, prefix), `wine cmd /c ver` inside the prefix (console only, no window), `mam play --dry-run`, the D3DMetal path, `doctor` and `uninstall`; `tests/shim_test.sh` spawns a fake `mnm.exe` through a tiny host program with the shim inserted. The launcher window and the game are opened only by the owner, from his own account.
 
 ## Not in scope, on purpose
 

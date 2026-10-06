@@ -19,7 +19,8 @@ One-click installer for the tooling that runs Monsters & Memories on an Apple-Si
 
 ## Tooling
 
-- `bin/mam` — the whole installer: `doctor`, `install`, `launcher`, `play`, `clean`, `uninstall`, `wine`, `env`; pins, layout and the Wine environment live at its top. `bin/mam help` lists options.
+- `bin/mam` — the whole installer: `doctor`, `install`, `launcher`, `play`, `clean`, `uninstall`, `wine`, `env`, `version`; pins, layout and the Wine environment live at its top. `bin/mam help` lists options.
 - `shim/mamplay.c` — the `posix_spawn` interposer that turns the launcher's Play into `mam play`; `shim/test_host.c` stands in for the launcher in tests.
 - `tests/shim_test.sh` — builds the shim and proves the redirect without any launcher or Wine.
+- `tests/install_test.sh` — end to end in a temp `MAM_HOME`, ending in `uninstall`; `MAM_CACHE=$PWD/.local/mam/downloads` skips the 270 MB fetch.
 - `Install Monsters & Memories.command`, `Monsters & Memories.command`, `install.sh` — the double-click and terminal entry points; each is one `exec bin/mam …` line.

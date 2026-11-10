@@ -345,14 +345,14 @@ launcher_wrap() {  # make the bundle's executable a wrapper that runs 'mam launc
     [[ -x $LAUNCHER_ENTRY || -x $LAUNCHER_BIN ]] || return 1
     if [[ -x $LAUNCHER_ENTRY && $(head -c 2 "$LAUNCHER_ENTRY") != '#!' ]]; then
         # the stock Mach-O (also a self-update that overlaid the bundle while .real exists)
-        mv -f "$LAUNCHER_ENTRY" "$LAUNCHER_BIN"
+        mv -f "$LAUNCHER_ENTRY" "$LAUNCHER_BIN" || die "could not move the stock launcher to $LAUNCHER_BIN (is the bundle writable?)"
         note "launcher: stock binary moved to mnm_launcher.real; the bundle now starts through mam"
     fi
     [[ -x $LAUNCHER_BIN ]] || return 1
     # rewritten on every call: the paths go stale if the repo moves
     printf '#!/bin/bash\n# MAM-mac wrapper: the stock launcher is mnm_launcher.real beside this file.\nexport MAM_HOME=%q\nexec %q launcher "$@"\n' \
-        "$MAM_HOME" "$MAM_BIN" > "$LAUNCHER_ENTRY.tmp"
-    chmod +x "$LAUNCHER_ENTRY.tmp" && mv -f "$LAUNCHER_ENTRY.tmp" "$LAUNCHER_ENTRY"
+        "$MAM_HOME" "$MAM_BIN" > "$LAUNCHER_ENTRY.tmp" || die "could not write the launcher wrapper $LAUNCHER_ENTRY"
+    chmod +x "$LAUNCHER_ENTRY.tmp" && mv -f "$LAUNCHER_ENTRY.tmp" "$LAUNCHER_ENTRY" || die "could not install the launcher wrapper $LAUNCHER_ENTRY"
 }
 
 # ---- launcher ---------------------------------------------------------------
@@ -361,7 +361,7 @@ cmd_launcher() {
     while [[ $# -gt 0 ]]; do case $1 in
         --update) update=1; shift ;;
         -psn_*) shift ;;   # Finder's process serial number
-        *) die "unknown launcher option $1" ;;
+        *) warn "ignoring launcher argument $1"; shift ;;   # a Finder start has nowhere to show an error, so never die here
     esac; done
     launcher_wrap || die "launcher not installed; run: bin/mam install"
     [[ $(head -c 2 "$LAUNCHER_BIN") != '#!' ]] || die "$LAUNCHER_BIN is a script, not the stock launcher; run: bin/mam install --reinstall"

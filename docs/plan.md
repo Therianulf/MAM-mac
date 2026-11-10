@@ -14,7 +14,7 @@ Everything goes into one folder, `MAM_HOME`, default `~/MAM-mac/` (the owner's c
 
 | Piece | Source | Size | Why |
 |---|---|---|---|
-| Official Mac launcher (0.20.3 build) | the launcher page's `Monsters & Memories.app.tar.gz` — byte-identical to the update API's "0.22.13" file | 10 MB | the login/patch UI; started with `--stinky-cheese` so it does not loop on a self-update to the same build (`mam launcher --update` allows it; `mam install --launcher-latest` refetches from the API) |
+| Official Mac launcher (0.20.3 build) | the launcher page's `Monsters & Memories.app.tar.gz` — byte-identical to the update API's "0.22.13" file | 10 MB | the login/patch UI; the bundle's executable is our wrapper (the stock binary is `mnm_launcher.real`), so any start of the bundle gets `--stinky-cheese` and does not loop on a self-update to the same build (`mam launcher --update` allows it; `mam install --launcher-latest` refetches from the API) |
 | Wine engine `WS12WineSikarugir10.0_6` | `github.com/Sikarugir-App/Engines` release | ~340 MB | x86_64 Wine with msync; the build proven on this game |
 | Sikarugir Template 1.0.18 | `github.com/Sikarugir-App/Template` release | ~80 MB | the engine's support dylibs; also carries Apple D3DMetal 3.0 |
 | DXMT 0.80 | `github.com/3Shain/dxmt` release | small | default DirectX 11 → Metal layer, MIT |
@@ -30,6 +30,7 @@ The only thing that can touch the system outside `MAM_HOME` is Rosetta 2, and on
 
 The launcher patches the game into `./mnm/` under its working directory and its Play button spawns `./mnm/mnm.exe --token <jwt>` directly, which macOS cannot run. `mam launcher` fixes both:
 
+0. the bundle's own executable is a wrapper that runs `mam launcher`: it is rewritten on every install and every launch, and an old layout (the stock binary as the bundle executable) is migrated by `mam install` or `mam launcher`;
 1. starts the launcher binary with the working directory set to `MAM_HOME/Game/` (so the game lands in `MAM_HOME/Game/mnm/`), and
 2. loads `libmamplay.dylib` into it with `DYLD_INSERT_LIBRARIES` (the launcher is ad-hoc signed without hardened runtime, so this is allowed). The dylib interposes `posix_spawn`/`posix_spawnp`; when the launcher spawns `…/mnm.exe`, it spawns `mam play --token <jwt>` instead. The launcher sees a running child and shows "Game is running" as on Windows.
 
@@ -50,7 +51,7 @@ This is the approach MnM-on-Mac v1 took (MIT, credited in the repo); its own shi
 ## A machine that already has some of it
 
 - Re-running `mam install` is idempotent: cached downloads are re-hashed and skipped, an unpacked runtime is skipped, an existing prefix is kept. `--reinstall` redoes the runtime, `--reset-prefix` rebuilds the prefix (game files untouched).
-- A launcher the owner already opened by hand shares the same `launcher.db` (same bundle id, same app-data folder), so its saved login carries over. Any game files it wrote are wherever its working directory was; `mam install --game-dir <folder>` adopts an existing folder that contains `mnm/mnm.exe`.
+- A launcher already opened by hand shares the same `launcher.db` (same bundle id, same app-data folder), so its saved login carries over. The wrapper makes opening the bundle safe after the first `mam launcher` or install. Any game files it wrote are wherever its working directory was; `mam install --game-dir <folder>` adopts an existing folder that contains `mnm/mnm.exe`.
 - Other Wine installs are ignored on purpose; this stays self-contained so it can be removed cleanly.
 
 ## Removal
@@ -68,7 +69,7 @@ The icon's launch script names the `MAM_HOME` it opens, and `uninstall` removes 
 
 ## Testing without changing this Mac
 
-`MAM_HOME=<repo>/.local/mam` (gitignored) or a temp folder. `tests/install_test.sh` runs `mam install` end to end in a temp folder with a temp `HOME` (downloads, hashes, unpack, prefix), `wine cmd /c ver` inside the prefix (console only, no window), `mam play --dry-run`, the D3DMetal path, `doctor` and `uninstall`; `tests/shim_test.sh` spawns a fake `mnm.exe` through a tiny host program with the shim inserted. The launcher window and the game are opened only by the owner, from his own account.
+`MAM_HOME=<repo>/.local/mam` (gitignored) or a temp folder. `tests/install_test.sh` runs `mam install` end to end in a temp folder with a temp `HOME` (downloads, hashes, unpack, prefix), then swaps a compiled stub in for the stock launcher binary to prove the wrapper (Finder-style start with `-psn_`, `--stinky-cheese`, shim, `MAM_HOME`, working directory, no recursion) and the migration of an old layout by `mam launcher` and by `mam install`, `wine cmd /c ver` inside the prefix (console only, no window), `mam play --dry-run`, the D3DMetal path, `doctor` and `uninstall`; `tests/shim_test.sh` spawns a fake `mnm.exe` through a tiny host program with the shim inserted. The launcher window and the game are opened only by Ben, from his own account.
 
 ## Not in scope, on purpose
 
@@ -79,6 +80,8 @@ CrossOver (commercial, not redistributable), Apple's GPTK `.dmg` (login-gated do
 - 2026-10-05, M4 Max, macOS 26.7.1, full Xcode: install, login, the 8.7 GB patch, the launcher's Play button and the game itself under D3DMetal all worked; `mam play` from the saved login also starts the game.
 - 2026-10-06, M2 Pro, macOS 26.7.1, Command Line Tools only: `mam install --yes` left 1.7 GB in `MAM_HOME`; the launcher patched 261 files (8.7 GB, 7 GB downloaded, about 342 s); Play through the shim and the game under D3DMetal worked.
 - Sizes of the M4 Max install, measured 2026-10-06 with `du -sh` (the README's table): `Runtime` 1.1 GB, `Prefix` 339 MB, `downloads` 270 MB, `Launcher` 19 MB, `Game` 8.7 GB, 10 GB in all.
+- 2026-11-10: loop observed when the bundle was opened from Finder (see launcher-requirements §1).
+- **INFERRED** — a Finder start of a script executable that execs `.real` is untested; the live test is Ben's.
 - Not tried yet: `--renderer dxmt`, macOS older than 26, a Mac without a C compiler (no shim), the installer fetched as a ZIP rather than by `git clone`.
 
 ## Where this started

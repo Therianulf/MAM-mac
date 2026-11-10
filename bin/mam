@@ -47,7 +47,8 @@ D3DMETAL="$FRAMEWORKS/renderer/d3dmetal"
 PREFIX="$MAM_HOME/Prefix"
 LAUNCHER_DIR="$MAM_HOME/Launcher"
 LAUNCHER_APP="$LAUNCHER_DIR/mnm_patcher_app.app"
-LAUNCHER_BIN="$LAUNCHER_APP/Contents/MacOS/mnm_launcher"
+LAUNCHER_ENTRY="$LAUNCHER_APP/Contents/MacOS/mnm_launcher"      # the bundle's CFBundleExecutable: our wrapper script
+LAUNCHER_BIN="$LAUNCHER_APP/Contents/MacOS/mnm_launcher.real"   # the stock Mach-O
 SHIM="$MAM_HOME/lib/libmamplay.dylib"
 LOGS="$MAM_HOME/Logs"
 CONFIG="$MAM_HOME/config"
@@ -128,7 +129,7 @@ cmd_doctor() {
     say "Installed by MAM-mac:"
     [[ -f $RUNTIME/.installed ]] && note "runtime $(cat "$RUNTIME/.installed")" || note "runtime: not installed"
     [[ -d $PREFIX/drive_c ]] && note "prefix: $PREFIX" || note "prefix: none"
-    [[ -x $LAUNCHER_BIN ]] && note "launcher: $LAUNCHER_APP ($(plutil -extract CFBundleShortVersionString raw "$LAUNCHER_APP/Contents/Info.plist" 2>/dev/null))" || note "launcher: not installed"
+    [[ -x $LAUNCHER_BIN || -x $LAUNCHER_ENTRY ]] && note "launcher: $LAUNCHER_APP ($(plutil -extract CFBundleShortVersionString raw "$LAUNCHER_APP/Contents/Info.plist" 2>/dev/null))" || note "launcher: not installed"
     [[ -f $SHIM ]] && note "play shim: $SHIM" || note "play shim: none"
     [[ -d $APP_LINK ]] && note "icon: $APP_LINK" || note "icon: none"
     note "renderer: $(renderer); game folder: $(game_dir)"
@@ -284,12 +285,14 @@ cmd_install() {
     cp "$ENGINE/lib/wine/x86_64-windows/winemetal.dll" "$PREFIX/drive_c/windows/system32/"
 
     say "[5/6] official launcher"
+    launcher_wrap || true    # an old layout (stock binary as the bundle executable) is migrated here, so the check below does not re-download
     if [[ $reinstall == 1 || $launcher_latest == 1 || ! -x $LAUNCHER_BIN ]]; then
         rm -rf "$LAUNCHER_DIR"; mkdir -p "$LAUNCHER_DIR"
         tar -xzf "$launcher_tgz" -C "$LAUNCHER_DIR"
-        [[ -x $LAUNCHER_BIN ]] || die "launcher layout unexpected: no $LAUNCHER_BIN"
+        [[ -x $LAUNCHER_ENTRY ]] || die "launcher layout unexpected: no $LAUNCHER_ENTRY"
         xattr -dr com.apple.quarantine "$LAUNCHER_APP" 2>/dev/null || true
-        note "launcher $(plutil -extract CFBundleShortVersionString raw "$LAUNCHER_APP/Contents/Info.plist") at $LAUNCHER_APP"
+        launcher_wrap || die "could not set up the launcher wrapper"
+        note "launcher $(plutil -extract CFBundleShortVersionString raw "$LAUNCHER_APP/Contents/Info.plist") at $LAUNCHER_APP (opens through bin/mam)"
     else note "launcher kept: $LAUNCHER_APP"; fi
 
     say "[6/6] play shim and game folder"
@@ -338,20 +341,37 @@ make_app_link() {  # a user-level app bundle that runs 'mam launcher'; no admin,
 EOF
 }
 
+launcher_wrap() {  # make the bundle's executable a wrapper that runs 'mam launcher'; 1 when there is no launcher
+    [[ -x $LAUNCHER_ENTRY || -x $LAUNCHER_BIN ]] || return 1
+    if [[ -x $LAUNCHER_ENTRY && $(head -c 2 "$LAUNCHER_ENTRY") != '#!' ]]; then
+        # the stock Mach-O (also a self-update that overlaid the bundle while .real exists)
+        mv -f "$LAUNCHER_ENTRY" "$LAUNCHER_BIN" || die "could not move the stock launcher to $LAUNCHER_BIN (is the bundle writable?)"
+        note "launcher: stock binary moved to mnm_launcher.real; the bundle now starts through mam"
+    fi
+    [[ -x $LAUNCHER_BIN ]] || return 1
+    # rewritten on every call: the paths go stale if the repo moves
+    printf '#!/bin/bash\n# MAM-mac wrapper: the stock launcher is mnm_launcher.real beside this file.\nexport MAM_HOME=%q\nexec %q launcher "$@"\n' \
+        "$MAM_HOME" "$MAM_BIN" > "$LAUNCHER_ENTRY.tmp" || die "could not write the launcher wrapper $LAUNCHER_ENTRY"
+    chmod +x "$LAUNCHER_ENTRY.tmp" && mv -f "$LAUNCHER_ENTRY.tmp" "$LAUNCHER_ENTRY" || die "could not install the launcher wrapper $LAUNCHER_ENTRY"
+}
+
 # ---- launcher ---------------------------------------------------------------
 cmd_launcher() {
     local update=0
     while [[ $# -gt 0 ]]; do case $1 in
         --update) update=1; shift ;;
-        *) die "unknown launcher option $1" ;;
+        -psn_*) shift ;;   # Finder's process serial number
+        *) warn "ignoring launcher argument $1"; shift ;;   # a Finder start has nowhere to show an error, so never die here
     esac; done
-    [[ -x $LAUNCHER_BIN ]] || die "launcher not installed; run: bin/mam install"
+    launcher_wrap || die "launcher not installed; run: bin/mam install"
+    [[ $(head -c 2 "$LAUNCHER_BIN") != '#!' ]] || die "$LAUNCHER_BIN is a script, not the stock launcher; run: bin/mam install --reinstall"
     [[ -f $RUNTIME/.installed ]] || die "runtime not installed; run: bin/mam install"
     local gd; gd=$(game_dir); mkdir -p "$gd" "$LOGS"
     export MAM_BIN MAM_HOME
     if [[ -f $SHIM ]]; then export DYLD_INSERT_LIBRARIES="$SHIM"
     else warn "no play shim: the Play button will fail; use 'bin/mam play' after patching"; fi
     local args=(); [[ $update == 1 ]] || args+=(--stinky-cheese)   # skip the self-update check
+    [[ $update == 0 ]] || warn "--update: the server's current build (0.22.13) is the same bytes as ours (0.20.3), so the launcher reinstalls itself and restarts on every start (seen 2026-11-10: 26 restarts in 3 minutes). Quit it if it loops; 'mam launcher' without --update is the safe way."
     say "Opening the official launcher (game folder: $gd). Log in, Install/Update, Play."
     say "Launcher output goes to $LOGS/launcher.log"
     space_warning

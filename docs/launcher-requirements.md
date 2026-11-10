@@ -19,7 +19,11 @@ Researched 2026-10-05. Three kinds of evidence, kept apart:
 - **OBSERVED** — that tarball unpacks to `mnm_patcher_app.app`: bundle id `com.monstersandmemories.mnm-patcher-app`, executable `Contents/MacOS/mnm_launcher`, version **0.20.3**, **arm64 only** (no Intel slice), ad-hoc signed, not notarized, no hardened runtime. It is a Tauri 2.8.5 app (Rust + WebKit), author string "Niche Worlds Cult", description "A launcher and patcher for Monsters & Memories".
 - **STATED** — the launcher's own update API, `https://account.monstersandmemories.com/api/launcher/update?target=darwin-aarch64&current_version=0.0.0`, answers version **0.22.13**, published **2026-03-05**, file `launcher_v2/0.22.13/mnm_patcher_app_0.22.13_aarch64.app.tar.gz`. `target=darwin-x86_64` returns nothing. For comparison: Windows 0.24.6 (2026-10-01), Linux 0.22.14 (2026-03-06).
 - **OBSERVED** — the update API's "0.22.13" tarball is byte-identical to the launcher page's tarball (same SHA-256 `3ef88c15…`); its `Info.plist` says 0.20.3 and the binary is dated 2026-01-14. One build, two labels.
-- **INFERRED** — there is no Intel Mac build, and the Mac launcher is about seven months behind the Windows one. A launcher that believes it is 0.20.3 and is offered "0.22.13" may try to self-update to the same file on every start; `--stinky-cheese` skips that check.
+- **INFERRED** — there is no Intel Mac build, and the Mac launcher is about seven months behind the Windows one.
+- **OBSERVED** (2026-11-10) — the bundle opened without `--stinky-cheese` relaunched itself 26 times in 3 minutes; the server offered "0.22.13", the same bytes as our 0.20.3.
+- **INFERRED** — the updater installs the same bytes, restarts, and is offered the update again; `--stinky-cheese` skips the check.
+- **OBSERVED** — `codesign -dv` on the installed bundle: `flags=0x20002(adhoc,linker-signed)`, `TeamIdentifier=not set`.
+- **INFERRED** — a linker signature covers only the Mach-O itself, so renaming it to `mnm_launcher.real` and putting our wrapper in its place breaks no bundle seal; a Finder start of that wrapper is untested until Ben's live test.
 
 ## 2. What the launcher does, and does not do
 
@@ -31,6 +35,8 @@ Researched 2026-10-05. Three kinds of evidence, kept apart:
 - **OBSERVED** — Play is `start_game { directory: "./mnm/", executable: "mnm.exe", token }`, implemented as `Command::new("./mnm//mnm.exe").arg("--token").arg(token).spawn()`. The child is kept so `is_game_running` can poll it.
 - **OBSERVED** — the only other things it runs: `/usr/bin/open` (for links), and its self-updater (Tauri updater 2.9.0, minisign-signed, which uses an admin-privileges AppleScript only when the bundle is not writable). `--stinky-cheese` skips the update check. `MNM_LOCAL_SERVER` is a developer switch.
 - **OBSERVED** — not present anywhere in the binary or frontend: `wine`, `WINEPREFIX`, `crossover`, `proton`, `umu`, `gptk`, `D3DMetal`, `dxvk`, `dxmt`, `rosetta`, `arch -x86_64`.
+- **OBSERVED** (2026-11-10) — the looping launcher processes were started by LaunchServices from the bundle's own path and wrote nothing to `Logs/launcher.log`.
+- **INFERRED** — so they ran without `bin/mam`: no `--stinky-cheese`, no shim, no game folder.
 - **INFERRED** — on a Mac, opened from Finder, the working directory is `/`, so patching into `/mnm/` fails, and even with a good working directory Play fails with an exec-format error because `mnm.exe` is a Windows PE. The Mac launcher has no working play path of its own; "use with Wine…" means a wrapper has to supply one.
 
 ## 3. What the game client needs

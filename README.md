@@ -90,6 +90,7 @@ Run these from the installer folder (`cd ~/MAM-mac-installer` first).
 - **The game closes straight after a patch:** press **Repair** in the launcher. It re-checks the game files and downloads any that are damaged.
 - **Low on disk space:** `bin/mam clean` deletes the installer's download cache (about 270 MB). The installer downloads it again the next time it runs.
 - **You'd rather not accept Apple's licence, or your Mac is on macOS 14 (14.6 or later):** `./install.sh --renderer dxmt` uses the open-source DXMT graphics layer instead of D3DMetal. It installs, but it hasn't been tested with the game yet.
+- **The launcher does nothing when you press Update or Install:** your saved login has expired (it lasts about four weeks) and the launcher does not say so. Click **Logout**, log back in, then press the button again.
 - **The launcher keeps restarting by itself:** it was opened without the installer's help, so it keeps trying to update itself to the same build. Quit it and open **Monsters & Memories** from `~/Applications` (or run `bin/mam launcher` once). After that the app inside `~/MAM-mac/Launcher` starts the right way too, but the icon is still the one to use.
 - **Logs** are in `~/MAM-mac/Logs`. **Never post or share `launcher.log`:** it contains your login token in plain text, so treat it like a password. The other logs can include your account name, so read them before you share them.
 
